@@ -247,28 +247,23 @@ WHERE rs.return_id IS NULL;
 Write a query to identify members who have overdue books (assume a 30-day return period). Display the member's_id, member's name, book title, issue date, and days overdue.
 
 ```sql
-SELECT 
-    ist.issued_member_id,
-    m.member_name,
-    bk.book_title,
-    ist.issued_date,
-    -- rs.return_date,
-    CURRENT_DATE - ist.issued_date as over_dues_days
-FROM issued_status as ist
-JOIN 
-members as m
-    ON m.member_id = ist.issued_member_id
-JOIN 
-books as bk
-ON bk.isbn = ist.issued_book_isbn
-LEFT JOIN 
-return_status as rs
-ON rs.issued_id = ist.issued_id
-WHERE 
-    rs.return_date IS NULL
-    AND
-    (CURRENT_DATE - ist.issued_date) > 30
-ORDER BY 1
+select * from members;
+select * from issued_status;
+select * from books;
+select * from return_status;
+
+select current_date;
+
+select ist.issued_member_id,m.member_name,b.book_title,ist.issued_date,DATEDIFF(current_date,ist.issued_date ) as overdue_days,rs.return_date
+ from issued_status as ist
+join members as m
+on ist.issued_member_id=m.member_id
+join books as b
+on b.isbn=ist.issued_book_isbn
+left join return_status as rs
+on rs.issued_id=ist.issued_id
+ where rs.return_date is null and DATEDIFF(current_date,ist.issued_date )>30
+ order by 1;
 ```
 
 
@@ -277,45 +272,43 @@ Write a query to update the status of books in the books table to "Yes" when the
 
 
 ```sql
+DELIMITER $$
 
-CREATE OR REPLACE PROCEDURE add_return_records(p_return_id VARCHAR(10), p_issued_id VARCHAR(10), p_book_quality VARCHAR(10))
-LANGUAGE plpgsql
-AS $$
-
-DECLARE
-    v_isbn VARCHAR(50);
-    v_book_name VARCHAR(80);
-    
+CREATE PROCEDURE add_return_records(
+    IN p_return_id VARCHAR(20),
+    IN p_issued_id VARCHAR(20),
+    IN p_book_quality VARCHAR(15)
+)
 BEGIN
-    -- all your logic and code
-    -- inserting into returns based on users input
-    INSERT INTO return_status(return_id, issued_id, return_date, book_quality)
-    VALUES
-    (p_return_id, p_issued_id, CURRENT_DATE, p_book_quality);
+    DECLARE v_isbn VARCHAR(50);
+    DECLARE v_book_name VARCHAR(80);
 
-    SELECT 
-        issued_book_isbn,
-        issued_book_name
-        INTO
-        v_isbn,
-        v_book_name
+    -- Insert return record
+    INSERT INTO return_status(return_id, issued_id, return_date, book_quality)
+    VALUES (p_return_id, p_issued_id, CURRENT_DATE, p_book_quality);
+
+    -- Get the book's ISBN and name from issued_status
+    SELECT issued_book_isbn, issued_book_name
+    INTO v_isbn, v_book_name
     FROM issued_status
     WHERE issued_id = p_issued_id;
 
+    -- Update book status to 'yes'
     UPDATE books
     SET status = 'yes'
     WHERE isbn = v_isbn;
 
-    RAISE NOTICE 'Thank you for returning the book: %', v_book_name;
-    
-END;
-$$
+    -- Display message (visible in client tools like MySQL Workbench)
+    SELECT CONCAT('Thank you for returning the book: ', v_book_name) AS message;
 
+END$$
+
+DELIMITER ;
 
 -- Testing FUNCTION add_return_records
 
-issued_id = IS135
-ISBN = WHERE isbn = '978-0-307-58837-1'
+-- issued_id = IS135
+-- ISBN = WHERE isbn = '978-0-307-58837-1';
 
 SELECT * FROM books
 WHERE isbn = '978-0-307-58837-1';
@@ -328,13 +321,10 @@ WHERE issued_id = 'IS135';
 
 -- calling function 
 CALL add_return_records('RS138', 'IS135', 'Good');
-
 -- calling function 
 CALL add_return_records('RS148', 'IS140', 'Good');
 
 ```
-
-
 
 
 **Task 15: Branch Performance Report**  
@@ -372,16 +362,14 @@ Use the CREATE TABLE AS (CTAS) statement to create a new table active_members co
 
 ```sql
 
-CREATE TABLE active_members
-AS
+CREATE TABLE active_members AS
 SELECT * FROM members
-WHERE member_id IN (SELECT 
-                        DISTINCT issued_member_id   
-                    FROM issued_status
-                    WHERE 
-                        issued_date >= CURRENT_DATE - INTERVAL '2 month'
-                    )
-;
+WHERE member_id IN (
+    SELECT DISTINCT issued_member_id
+    FROM issued_status
+    WHERE issued_date >= DATE_SUB(CURDATE(), INTERVAL 2 MONTH)
+);
+
 
 SELECT * FROM active_members;
 
@@ -421,59 +409,63 @@ If the book is available, it should be issued, and the status in the books table
 If the book is not available (status = 'no'), the procedure should return an error message indicating that the book is currently not available.
 
 ```sql
+DELIMITER $$
 
-CREATE OR REPLACE PROCEDURE issue_book(p_issued_id VARCHAR(10), p_issued_member_id VARCHAR(30), p_issued_book_isbn VARCHAR(30), p_issued_emp_id VARCHAR(10))
-LANGUAGE plpgsql
-AS $$
-
-DECLARE
--- all the variabable
-    v_status VARCHAR(10);
-
+CREATE PROCEDURE issue_book(
+    IN p_issued_id VARCHAR(20),
+    IN p_issued_member_id VARCHAR(20),
+    IN p_issued_book_isbn VARCHAR(50),
+    IN p_issued_emp_id VARCHAR(20)
+)
 BEGIN
--- all the code
-    -- checking if book is available 'yes'
-    SELECT 
-        status 
-        INTO
-        v_status
+    DECLARE v_status VARCHAR(10);
+
+    -- Check if book is available
+    SELECT status INTO v_status
     FROM books
     WHERE isbn = p_issued_book_isbn;
 
     IF v_status = 'yes' THEN
 
-        INSERT INTO issued_status(issued_id, issued_member_id, issued_date, issued_book_isbn, issued_emp_id)
-        VALUES
-        (p_issued_id, p_issued_member_id, CURRENT_DATE, p_issued_book_isbn, p_issued_emp_id);
+        -- Insert issue record
+        INSERT INTO issued_status(
+            issued_id, issued_member_id, issued_date, issued_book_isbn, issued_emp_id
+        ) VALUES (
+            p_issued_id, p_issued_member_id, CURRENT_DATE, p_issued_book_isbn, p_issued_emp_id
+        );
 
+        -- Update book status to 'no'
         UPDATE books
-            SET status = 'no'
+        SET status = 'no'
         WHERE isbn = p_issued_book_isbn;
 
-        RAISE NOTICE 'Book records added successfully for book isbn : %', p_issued_book_isbn;
-
+        SELECT CONCAT('Book records added successfully for book ISBN: ', p_issued_book_isbn) AS message;
 
     ELSE
-        RAISE NOTICE 'Sorry to inform you the book you have requested is unavailable book_isbn: %', p_issued_book_isbn;
+        SELECT CONCAT('Sorry, the book is unavailable. Book ISBN: ', p_issued_book_isbn) AS message;
     END IF;
-END;
-$$
 
--- Testing The function
+END$$
+
+DELIMITER ;
+
+-- checking the procedure
+
 SELECT * FROM books;
 -- "978-0-553-29698-2" -- yes
 -- "978-0-375-41398-8" -- no
 SELECT * FROM issued_status;
 
+
 CALL issue_book('IS155', 'C108', '978-0-553-29698-2', 'E104');
+
 CALL issue_book('IS156', 'C108', '978-0-375-41398-8', 'E104');
+
 
 SELECT * FROM books
 WHERE isbn = '978-0-375-41398-8'
 
 ```
-
-
 
 **Task 20: Create Table As Select (CTAS)**
 Objective: Create a CTAS (Create Table As Select) query to identify overdue books and calculate fines.
